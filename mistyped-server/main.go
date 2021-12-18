@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -52,6 +53,11 @@ func check(e error) {
 	}
 }
 
+type CheckUrlResponse struct {
+	Available   []string `json:"Available"`
+	Unavailable []string `json:"Unavailable"`
+}
+
 func main() {
 
 	handleRequests()
@@ -72,10 +78,17 @@ func handleRequests() {
 
 func handleCheckUrl(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET,POST, PUT")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
 	err := r.ParseForm()
 	check(err)
 	url := r.Form.Get("url")
-
+	if !isUrlValid(url) {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 	candidates := getCandidates(url)
 
 	c1 := make(chan []string)
@@ -84,13 +97,16 @@ func handleCheckUrl(w http.ResponseWriter, r *http.Request) {
 	availableCandidates := <-c1
 	unavailableCandidates := <-c2
 
-	result := make(map[string][]string)
-	result["available"] = availableCandidates
-	result["unavailable"] = unavailableCandidates
 	fmt.Println(availableCandidates)
 	fmt.Println(unavailableCandidates)
 
-	json.NewEncoder(w).Encode(result)
+	response := CheckUrlResponse{
+		Available:   availableCandidates,
+		Unavailable: unavailableCandidates,
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }
 
 func checkUrlAvailability(c1 chan []string, c2 chan []string, candidates []string) {
@@ -100,10 +116,10 @@ func checkUrlAvailability(c1 chan []string, c2 chan []string, candidates []strin
 
 	for _, candidate := range candidates {
 		client := http.Client{
-			Timeout: 1 * time.Second,
+			Timeout: 5 * time.Second,
 		}
 		res, err := client.Get(candidate)
-		if err != nil && res != nil && (res.Status == strconv.Itoa(200) || res.Status == strconv.Itoa(204)) {
+		if err == nil && res != nil && (res.StatusCode == 200 || res.StatusCode == 204 || res.StatusCode == 403) {
 			availableCandidates = append(availableCandidates, candidate)
 		} else {
 			unavailableCandidates = append(unavailableCandidates, candidate)
@@ -157,4 +173,9 @@ func getString(stringArray []string) string {
 	}
 
 	return result
+}
+
+func isUrlValid(u string) bool {
+	_, err := url.ParseRequestURI(u)
+	return err == nil
 }
